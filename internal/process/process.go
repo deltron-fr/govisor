@@ -2,12 +2,20 @@ package process
 
 import (
 	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"sync"
+	"text/tabwriter"
+	"time"
 
 	"go.yaml.in/yaml/v4"
 )
+
+var SOCKET_FILE_PATH = "/tmp/govisor.sock"
 
 type ProcessConfigFileInfo struct {
 	Name      string          `yaml:"name"`
@@ -22,6 +30,23 @@ type ProcessConfig struct {
 
 type ProcessStatus int
 
+func (ps ProcessStatus) String() string {
+	switch ps {
+	case StatusStarting:
+		return "STARTING"
+	case StatusRunning:
+		return "RUNNING"
+	case StatusStopped:
+		return "STOPPED"
+	case StatusRestarting:
+		return "RESTARTING"
+	case StatusCrashed:
+		return "CRASHED"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 const (
 	StatusStarting ProcessStatus = iota
 	StatusRunning
@@ -31,9 +56,11 @@ const (
 )
 
 type Process struct {
-	Cmd    *exec.Cmd
-	Config ProcessConfig
-	Status ProcessStatus
+	Cmd       *exec.Cmd
+	Config    ProcessConfig
+	Status    ProcessStatus
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type Supervisor struct {
@@ -48,12 +75,7 @@ func NewSupervisor() *Supervisor {
 	}
 }
 
-func (s *Supervisor) StartSupervisor(filePath string) error {
-	pfInfo, err := s.parseProcessFile(filePath)
-	if err != nil {
-		return err
-	}
-
+func (s *Supervisor) StartSupervisor(pfInfo ProcessConfigFileInfo) error {
 	for _, procConfig := range pfInfo.Processes {
 		s.processes[procConfig.Name] = &Process{
 			Config: procConfig,
@@ -61,29 +83,17 @@ func (s *Supervisor) StartSupervisor(filePath string) error {
 		}
 	}
 
-	s.startProcesses()
+	go s.startProcesses()
 
 	return nil
-}
-
-func (s *Supervisor) parseProcessFile(filePath string) (*ProcessConfigFileInfo, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
-	}
-
-	var pcInfo ProcessConfigFileInfo
-
-	if err := yaml.Unmarshal(data, &pcInfo); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal YAML: %w", err)
-	}
-
-	return &pcInfo, nil
 }
 
 func (s *Supervisor) startProcesses() {
 	for _, proc := range s.processes {
 		s.wg.Add(1)
+		proc.Status = StatusStarting
+		proc.CreatedAt = time.Now()
+		proc.UpdatedAt = time.Now()
 
 		procLogFile := fmt.Sprintf("%s.log", proc.Config.Name)
 		f, err := os.OpenFile(procLogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
@@ -99,39 +109,133 @@ func (s *Supervisor) startProcesses() {
 		execCmd.Stdout = procLog
 		execCmd.Stderr = procLog
 
-		go func(proc *Process, cmd *exec.Cmd) {
-			defer s.wg.Done()
-			defer f.Close()
-
-			err := cmd.Start()
-			if err != nil {
-				s.mu.Lock()
-				proc.Status = StatusCrashed
-				s.mu.Unlock()
-
-				fmt.Fprintf(procLog, "Failed to start process %s: %v\n", proc.Config.Name, err)
-				return
-			}
-
-			s.mu.Lock()
-			proc.Status = StatusRunning
-			s.mu.Unlock()
-
-			err = cmd.Wait()
-
-			s.mu.Lock()
-			defer s.mu.Unlock()
-
-			if err != nil {
-				// TODO: Implement process restart logic here
-				fmt.Fprintf(procLog, "Process %s exited with error: %v\n", proc.Config.Name, err)
-				proc.Status = StatusCrashed
-				return
-			}
-
-			proc.Status = StatusStopped
-		}(proc, execCmd)
+		go func(proc *Process, procLog *os.File) {
+			s.startProcess(proc, procLog)
+		}(proc, procLog)
 	}
 
 	s.wg.Wait()
+}
+
+func (s *Supervisor) startProcess(proc *Process, procLog *os.File) {
+	defer s.wg.Done()
+	defer procLog.Close()
+
+	backoff := time.Second
+
+	for {
+		cmd := exec.Command("sh", "-c", proc.Config.Command)
+		cmd.Stdout = procLog
+		cmd.Stderr = procLog
+
+		err := cmd.Start()
+		if err != nil {
+			s.mu.Lock()
+			proc.Status = StatusRestarting
+			proc.UpdatedAt = time.Now()
+			s.mu.Unlock()
+
+			time.Sleep(backoff)
+			backoff *= 2
+
+			fmt.Fprintf(procLog, "Failed to start process %s: %v\n", proc.Config.Name, err)
+			continue
+		}
+
+		backoff = time.Second
+
+		s.mu.Lock()
+		proc.Status = StatusRunning
+		proc.UpdatedAt = time.Now()
+		s.mu.Unlock()
+
+		err = cmd.Wait()
+
+		s.mu.Lock()
+		if err != nil {
+			fmt.Fprintf(procLog, "Process %s exited with error: %v\n", proc.Config.Name, err)
+
+			proc.Status = StatusRestarting
+			proc.UpdatedAt = time.Now()
+			s.mu.Unlock()
+
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		proc.Status = StatusStopped
+		proc.UpdatedAt = time.Now()
+		s.mu.Unlock()
+
+		break
+	}
+}
+
+func (s *Supervisor) monitorProcesses(writer io.Writer) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tw := tabwriter.NewWriter(writer, 0, 0, 3, ' ', 0)
+
+	fmt.Fprintln(tw, "NAME\tSTATUS\tCOMMAND\tCREATED\tUPDATED")
+
+	for _, proc := range s.processes {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			proc.Config.Name,
+			proc.Status.String(),
+			proc.Config.Command,
+			proc.CreatedAt.Format("15:04:05"),
+			proc.UpdatedAt.Format("15:04:05"),
+		)
+	}
+
+	tw.Flush()
+}
+
+func (s *Supervisor) ServeAPI() {
+	_ = os.Remove(SOCKET_FILE_PATH)
+
+	listener, err := net.Listen("unix", SOCKET_FILE_PATH)
+	if err != nil {
+		log.Fatalf("Failed to listen on socket: %v", err)
+	}
+	defer listener.Close()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /apply", s.handleApply)
+	mux.HandleFunc("GET /status", s.handleStatus)
+
+	if err := http.Serve(listener, mux); err != nil {
+		log.Fatalf("Failed to serve: %v", err)
+	}
+}
+
+func (s *Supervisor) handleApply(w http.ResponseWriter, r *http.Request) {
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+		return
+	}
+
+	var pcInfo ProcessConfigFileInfo
+	if err := yaml.Unmarshal(bodyBytes, &pcInfo); err != nil {
+		http.Error(w, "Failed to parse YAML: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err = s.StartSupervisor(pcInfo)
+	if err != nil {
+		http.Error(w, "Failed to start supervisor: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Process configuration applied successfully"))
+}
+
+func (s *Supervisor) handleStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+
+	s.monitorProcesses(w)
 }

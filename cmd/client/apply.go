@@ -1,13 +1,10 @@
-package cmd
+package main
 
 import (
-	"github.com/deltron-fr/govisor/internal/process"
 	"github.com/spf13/cobra"
 )
 
 var file string
-
-var s = process.NewSupervisor()
 
 var applyCmd = &cobra.Command{
 	Use:     "apply",
@@ -15,7 +12,7 @@ var applyCmd = &cobra.Command{
 	Short:   "Apply the process configuration",
 	Long:    "Apply the process configuration defined in the YAML file to start and manage the processes.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := s.StartSupervisor(file)
+		err := applyHandler(file)
 		if err != nil {
 			return err
 		}
