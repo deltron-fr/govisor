@@ -78,21 +78,24 @@ func (s *Supervisor) runProcess(proc *process.Process, procLog *os.File) {
 	backoff := time.Second
 
 	for {
-		cmd := exec.Command("sh", "-c", proc.Config.Command)
+		cmd := exec.Command("sh", "-c", "exec "+proc.Config.Command)
 		cmd.Stdout = procLog
 		cmd.Stderr = procLog
 
 		err := cmd.Start()
 		if err != nil {
-			if proc.Config.OnRestart == "" || proc.Config.OnRestart == "no" {
+			if proc.Config.Restart == config.Never {
 				updateStatus(s, process.StatusCrashed, proc)
-				break
+				return
 			}
 
 			updateStatus(s, process.StatusRestarting, proc)
 
 			time.Sleep(backoff)
 			backoff *= 2
+			if backoff >= 300*time.Second {
+				backoff = 30 * time.Second
+			}
 
 			fmt.Fprintf(procLog, "Failed to start process %s: %v\n", proc.Config.Name, err)
 			continue
@@ -106,24 +109,25 @@ func (s *Supervisor) runProcess(proc *process.Process, procLog *os.File) {
 		if err != nil {
 			fmt.Fprintf(procLog, "Process %s exited with error: %v\n", proc.Config.Name, err)
 
-			if proc.Config.OnRestart == "" || proc.Config.OnRestart == "no" {
+			if proc.Config.Restart == config.Never {
 				updateStatus(s, process.StatusCrashed, proc)
-				break
+				return
 			}
 
-			s.mu.Lock()
-			proc.Status = process.StatusRestarting
-			proc.UpdatedAt = time.Now()
-			s.mu.Unlock()
+			updateStatus(s, process.StatusRestarting, proc)
 
 			time.Sleep(backoff)
 			backoff *= 2
+			if backoff >= 300*time.Second {
+				backoff = 30 * time.Second
+			}
+
 			continue
 		}
 
-		if proc.Config.OnRestart == "on_failure" {
+		if proc.Config.Restart == config.Never || proc.Config.Restart == config.UnlessStopped {
 			updateStatus(s, process.StatusStopped, proc)
-			break
+			return
 		}
 	}
 }
