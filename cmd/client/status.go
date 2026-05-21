@@ -8,7 +8,7 @@ var statusCmd = &cobra.Command{
 	// TODO: change this because resource usage is not implemented yet
 	Long: "Get the status of the processes managed by govisor, including their current state, uptime, and resource usage*.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := statusHandler(SOCKET_PATH)
+		err := appClient.StatusHandler(cmd.OutOrStdout())
 		if err != nil {
 			return err
 		}

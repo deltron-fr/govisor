@@ -1,8 +1,11 @@
 package main
 
-import "github.com/deltron-fr/govisor/internal/process"
+import (
+	"github.com/deltron-fr/govisor/internal/ipc"
+	"github.com/deltron-fr/govisor/internal/server"
+)
 
 func main() {
-	supervisor := process.NewSupervisor()
-	supervisor.ServeAPI()
+	server := server.New(ipc.DEFAULT_SOCKET_PATH)
+	server.Serve()
 }

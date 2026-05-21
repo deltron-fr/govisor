@@ -1,25 +1,12 @@
 package main
 
 import (
-	"context"
-	"net"
-	"net/http"
-	"time"
+	"github.com/deltron-fr/govisor/internal/client"
+	"github.com/deltron-fr/govisor/internal/ipc"
 )
 
-var SOCKET_PATH = "/tmp/govisor.sock"
+var appClient = client.New(ipc.DEFAULT_SOCKET_PATH)
 
 func main() {
 	Execute()
-}
-
-func NewUnixClient(socketPath string) *http.Client {
-	return &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", socketPath)
-			},
-		},
-	}
 }
