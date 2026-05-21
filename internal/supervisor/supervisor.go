@@ -84,10 +84,12 @@ func (s *Supervisor) runProcess(proc *process.Process, procLog *os.File) {
 
 		err := cmd.Start()
 		if err != nil {
-			s.mu.Lock()
-			proc.Status = process.StatusRestarting
-			proc.UpdatedAt = time.Now()
-			s.mu.Unlock()
+			if proc.Config.OnRestart == "" || proc.Config.OnRestart == "no" {
+				updateStatus(s, process.StatusCrashed, proc)
+				break
+			}
+
+			updateStatus(s, process.StatusRestarting, proc)
 
 			time.Sleep(backoff)
 			backoff *= 2
@@ -98,17 +100,18 @@ func (s *Supervisor) runProcess(proc *process.Process, procLog *os.File) {
 
 		backoff = time.Second
 
-		s.mu.Lock()
-		proc.Status = process.StatusRunning
-		proc.UpdatedAt = time.Now()
-		s.mu.Unlock()
+		updateStatus(s, process.StatusRunning, proc)
 
 		err = cmd.Wait()
-
-		s.mu.Lock()
 		if err != nil {
 			fmt.Fprintf(procLog, "Process %s exited with error: %v\n", proc.Config.Name, err)
 
+			if proc.Config.OnRestart == "" || proc.Config.OnRestart == "no" {
+				updateStatus(s, process.StatusCrashed, proc)
+				break
+			}
+
+			s.mu.Lock()
 			proc.Status = process.StatusRestarting
 			proc.UpdatedAt = time.Now()
 			s.mu.Unlock()
@@ -118,11 +121,10 @@ func (s *Supervisor) runProcess(proc *process.Process, procLog *os.File) {
 			continue
 		}
 
-		proc.Status = process.StatusStopped
-		proc.UpdatedAt = time.Now()
-		s.mu.Unlock()
-
-		break
+		if proc.Config.OnRestart == "on_failure" {
+			updateStatus(s, process.StatusStopped, proc)
+			break
+		}
 	}
 }
 
@@ -141,4 +143,12 @@ func (s *Supervisor) Snapshots() []process.Snapshot {
 	s.mu.RUnlock()
 
 	return snapshots
+}
+
+func updateStatus[T process.ProcessStatus](supervisor *Supervisor, status T, proc *process.Process) {
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+
+	proc.Status = process.ProcessStatus(status)
+	proc.UpdatedAt = time.Now()
 }
