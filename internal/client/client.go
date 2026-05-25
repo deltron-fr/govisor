@@ -55,6 +55,15 @@ func (c *Client) StatusHandler(writer io.Writer) error {
 	return c.do(req, os.Stdout)
 }
 
+func (c *Client) StopHandler(writer io.Writer) error {
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/stop", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	return c.do(req, os.Stdout)
+}
+
 func (c *Client) do(req *http.Request, out io.Writer) error {
 	res, err := c.httpClient.Do(req)
 	if err != nil {

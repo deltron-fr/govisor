@@ -1,6 +1,7 @@
 package process
 
 import (
+	"os"
 	"os/exec"
 	"time"
 
@@ -36,6 +37,7 @@ const (
 
 type Process struct {
 	Cmd       *exec.Cmd
+	LogFile   *os.File
 	Config    config.ProcessConfig
 	Status    ProcessStatus
 	CreatedAt time.Time

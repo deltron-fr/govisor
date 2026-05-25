@@ -2,9 +2,11 @@ package supervisor
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/deltron-fr/govisor/internal/config"
@@ -12,14 +14,16 @@ import (
 )
 
 type Supervisor struct {
-	processes map[string]*process.Process
-	wg        sync.WaitGroup
-	mu        sync.RWMutex
+	processes  map[string]*process.Process
+	maxLogSize int
+	wg         sync.WaitGroup
+	mu         sync.RWMutex
 }
 
 func NewSupervisor() *Supervisor {
 	return &Supervisor{
-		processes: make(map[string]*process.Process),
+		processes:  make(map[string]*process.Process),
+		maxLogSize: 10 * (1 << 20),
 	}
 }
 
@@ -39,6 +43,8 @@ func (s *Supervisor) Apply(pfInfo config.ConfigFile) error {
 
 	go s.runProcesses(runtimes)
 
+	go s.runLogRotation()
+
 	return nil
 }
 
@@ -53,15 +59,17 @@ func (s *Supervisor) runProcesses(runtimes []*process.Process) {
 		f, err := os.OpenFile(procLogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error opening log file:", err)
-			// TODO: kill all processes started so far and exit
+			s.StopProcesses()
 			os.Exit(1)
 		}
 
 		procLog := f
+		proc.LogFile = procLog
 
 		execCmd := exec.Command("sh", "-c", proc.Config.Command)
 		execCmd.Stdout = procLog
 		execCmd.Stderr = procLog
+		proc.Cmd = execCmd
 
 		go func(proc *process.Process, procLog *os.File) {
 			s.runProcess(proc, procLog)
@@ -147,6 +155,59 @@ func (s *Supervisor) Snapshots() []process.Snapshot {
 	s.mu.RUnlock()
 
 	return snapshots
+}
+
+func (s *Supervisor) StopProcesses() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, proc := range s.processes {
+		if err := proc.Cmd.Process.Signal(syscall.SIGTERM); err != nil {
+			// TODO: this should be piped to the supervisor's log file
+			log.Printf("failed to send sigterm: %v\n", err)
+		}
+	}
+}
+
+func (s *Supervisor) runLogRotation() {
+	ticker := time.NewTicker(45 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			for _, p := range s.processes {
+				s.maybeRotate(p)
+			}
+		}
+	}
+}
+
+func (s *Supervisor) maybeRotate(proc *process.Process) {
+	info, err := proc.LogFile.Stat()
+	if err != nil || info.Size() < int64(s.maxLogSize) {
+		return
+	}
+
+	oldLogFile := fmt.Sprintf("%s.1.log", proc.Config.Name)
+	procLogFile := fmt.Sprintf("%s.log", proc.Config.Name)
+	err = os.Rename(procLogFile, oldLogFile)
+	if err != nil {
+		log.Printf("couldn't rename file: %v", err)
+		return
+	}
+
+	f, err := os.OpenFile(procLogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error opening log file:", err)
+		return
+	}
+
+	oldFile := proc.LogFile
+	proc.LogFile = f
+	proc.Cmd.Stderr = f
+	proc.Cmd.Stdout = f
+	oldFile.Close()
 }
 
 func updateStatus[T process.ProcessStatus](supervisor *Supervisor, status T, proc *process.Process) {

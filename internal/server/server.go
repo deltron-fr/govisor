@@ -1,15 +1,20 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"text/tabwriter"
+	"time"
 
 	"github.com/deltron-fr/govisor/internal/config"
+	"github.com/deltron-fr/govisor/internal/ipc"
 	"github.com/deltron-fr/govisor/internal/process"
 	"github.com/deltron-fr/govisor/internal/supervisor"
 	"go.yaml.in/yaml/v4"
@@ -39,10 +44,38 @@ func (s *Server) Serve() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /apply", s.handleApply)
 	mux.HandleFunc("GET /status", s.handleStatus)
+	mux.HandleFunc("GET /stop", s.handleStop)
 
-	if err := http.Serve(listener, mux); err != nil {
-		log.Fatalf("Failed to serve: %v", err)
+	srv := http.Server{
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		Handler:      mux,
 	}
+
+	go func() {
+		if err := srv.Serve(listener); err != nil {
+			log.Fatalf("Failed to serve: %v", err)
+		}
+	}()
+
+	sigChan := make(chan os.Signal, 1)
+
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+
+	<-sigChan
+	fmt.Println("received signal. shutting down gracefully...")
+	s.supervisor.StopProcesses()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+	defer cancel()
+
+	err = srv.Shutdown(ctx)
+	if err != nil {
+		log.Printf("Failed to shutdown server gracefully: %v", err)
+	}
+
+	os.Remove(ipc.DEFAULT_SOCKET_PATH)
+	log.Println("socket has been removed. exiting.")
 }
 
 func (s *Server) handleApply(w http.ResponseWriter, req *http.Request) {
@@ -67,6 +100,16 @@ func (s *Server) handleApply(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Process configuration applied successfully\n"))
+}
+
+func (s *Server) handleStop(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("stopping all processes...\n"))
+
+	s.supervisor.StopProcesses()
+
+	w.Write([]byte("all processes stopped successfully\n"))
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
