@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -32,13 +33,12 @@ func New(socketPath string) *Client {
 }
 
 func (c *Client) ApplyHandler(configPath string, writer io.Writer) error {
-	f, err := os.OpenFile(configPath, os.O_RDONLY, 0o644)
+	resolvedConfigPath, err := resolveConfigPath(configPath)
 	if err != nil {
-		return fmt.Errorf("failed to open config file: %w", err)
+		return fmt.Errorf("failed to resolve config path: %w", err)
 	}
-	defer f.Close()
 
-	req, err := http.NewRequest(http.MethodPut, baseURL+"/apply", f)
+	req, err := http.NewRequest(http.MethodPut, baseURL+"/apply", strings.NewReader(resolvedConfigPath))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -90,4 +90,22 @@ func (c *Client) do(req *http.Request, out io.Writer) error {
 	}
 
 	return nil
+}
+
+func resolveConfigPath(inputPath string) (string, error) {
+	if filepath.IsAbs(inputPath) {
+		return inputPath, nil
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get working directory: %w", err)
+	}
+
+	resolved, err := filepath.EvalSymlinks(filepath.Join(cwd, inputPath))
+	if err != nil {
+		return "", fmt.Errorf("could not evaluate symlinks for the given path: %w", err)
+	}
+
+	return resolved, nil
 }

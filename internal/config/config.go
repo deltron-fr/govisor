@@ -11,10 +11,13 @@ type ConfigFile struct {
 }
 
 type ProcessConfig struct {
-	Name        string  `yaml:"name"`
-	Description string  `yaml:"description"`
-	Command     string  `yaml:"command"`
-	Restart     Restart `yaml:"restart,omitempty"` // supports: never, always, on-failure, and unless-stopped
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description"`
+	Command     string   `yaml:"command"`
+	Args        []string `yaml:"args,omitempty"`
+	WorkDir     string   `yaml:"workdir,omitempty"`
+	Restart     Restart  `yaml:"restart,omitempty"` // supports: never, always, on-failure, and unless-stopped
+	Shell       bool     `yaml:"shell,omitempty"`
 }
 
 type Restart int

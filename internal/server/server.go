@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -33,6 +34,10 @@ func New(socketPath string) *Server {
 }
 
 func (s *Server) Serve() {
+	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0o755); err != nil {
+		log.Fatalf("failed to create socket directory: %v", err)
+	}
+
 	_ = os.Remove(s.socketPath)
 
 	listener, err := net.Listen("unix", s.socketPath)
@@ -79,9 +84,27 @@ func (s *Server) Serve() {
 }
 
 func (s *Server) handleApply(w http.ResponseWriter, req *http.Request) {
-	bodyBytes, err := io.ReadAll(req.Body)
+	filepath, err := io.ReadAll(req.Body)
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+		return
+	}
+
+	s.supervisor.SetConfigFilePath(string(filepath))
+
+	bodyBytes, err := os.ReadFile(string(filepath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Config file not found", http.StatusUnprocessableEntity)
+			return
+		}
+
+		if os.IsPermission(err) {
+			http.Error(w, "Permission denied reading config file", http.StatusForbidden)
+			return
+		}
+
+		http.Error(w, "Failed to read config file", http.StatusInternalServerError)
 		return
 	}
 

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -14,10 +15,11 @@ import (
 )
 
 type Supervisor struct {
-	processes  map[string]*process.Process
-	maxLogSize int
-	wg         sync.WaitGroup
-	mu         sync.RWMutex
+	processes      map[string]*process.Process
+	maxLogSize     int
+	configFilePath string
+	wg             sync.WaitGroup
+	mu             sync.RWMutex
 }
 
 func NewSupervisor() *Supervisor {
@@ -25,6 +27,10 @@ func NewSupervisor() *Supervisor {
 		processes:  make(map[string]*process.Process),
 		maxLogSize: 10 * (1 << 20),
 	}
+}
+
+func (s *Supervisor) SetConfigFilePath(path string) {
+	s.configFilePath = path
 }
 
 func (s *Supervisor) Apply(pfInfo config.ConfigFile) error {
@@ -66,11 +72,6 @@ func (s *Supervisor) runProcesses(runtimes []*process.Process) {
 		procLog := f
 		proc.LogFile = procLog
 
-		execCmd := exec.Command("sh", "-c", proc.Config.Command)
-		execCmd.Stdout = procLog
-		execCmd.Stderr = procLog
-		proc.Cmd = execCmd
-
 		go func(proc *process.Process, procLog *os.File) {
 			s.runProcess(proc, procLog)
 		}(proc, procLog)
@@ -86,11 +87,30 @@ func (s *Supervisor) runProcess(proc *process.Process, procLog *os.File) {
 	backoff := time.Second
 
 	for {
-		cmd := exec.Command("sh", "-c", "exec "+proc.Config.Command)
+		cmd, err := s.buildCommand(proc)
+		if err != nil {
+			fmt.Fprintf(procLog, "Failed to prepare process %s: %v\n", proc.Config.Name, err)
+
+			if proc.Config.Restart == config.Never {
+				updateStatus(s, process.StatusCrashed, proc)
+				return
+			}
+
+			updateStatus(s, process.StatusRestarting, proc)
+
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff >= 300*time.Second {
+				backoff = 30 * time.Second
+			}
+
+			continue
+		}
+
 		cmd.Stdout = procLog
 		cmd.Stderr = procLog
 
-		err := cmd.Start()
+		err = cmd.Start()
 		if err != nil {
 			if proc.Config.Restart == config.Never {
 				updateStatus(s, process.StatusCrashed, proc)
@@ -109,11 +129,13 @@ func (s *Supervisor) runProcess(proc *process.Process, procLog *os.File) {
 			continue
 		}
 
+		s.setProcessCommand(proc, cmd)
 		backoff = time.Second
 
 		updateStatus(s, process.StatusRunning, proc)
 
 		err = cmd.Wait()
+		s.clearProcessCommand(proc)
 		if err != nil {
 			fmt.Fprintf(procLog, "Process %s exited with error: %v\n", proc.Config.Name, err)
 
@@ -162,6 +184,10 @@ func (s *Supervisor) StopProcesses() {
 	defer s.mu.RUnlock()
 
 	for _, proc := range s.processes {
+		if proc.Cmd == nil || proc.Cmd.Process == nil {
+			continue
+		}
+
 		if err := proc.Cmd.Process.Signal(syscall.SIGTERM); err != nil {
 			// TODO: this should be piped to the supervisor's log file
 			log.Printf("failed to send sigterm: %v\n", err)
@@ -204,10 +230,13 @@ func (s *Supervisor) maybeRotate(proc *process.Process) {
 	}
 
 	oldFile := proc.LogFile
+	defer oldFile.Close()
+
 	proc.LogFile = f
-	proc.Cmd.Stderr = f
-	proc.Cmd.Stdout = f
-	oldFile.Close()
+	if proc.Cmd != nil {
+		proc.Cmd.Stderr = f
+		proc.Cmd.Stdout = f
+	}
 }
 
 func updateStatus[T process.ProcessStatus](supervisor *Supervisor, status T, proc *process.Process) {
@@ -216,4 +245,114 @@ func updateStatus[T process.ProcessStatus](supervisor *Supervisor, status T, pro
 
 	proc.Status = process.ProcessStatus(status)
 	proc.UpdatedAt = time.Now()
+}
+
+func (s *Supervisor) buildCommand(proc *process.Process) (*exec.Cmd, error) {
+	workDir := s.resolveWorkDir(proc.Config)
+
+	if proc.Config.Shell {
+		cmd := exec.Command("sh", "-c", "exec "+proc.Config.Command)
+		cmd.Dir = workDir
+		return cmd, nil
+	}
+
+	resolvedCommand, err := s.resolveCommandPath(proc.Config.Command, workDir)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.Command(resolvedCommand, proc.Config.Args...)
+	cmd.Dir = workDir
+	return cmd, nil
+}
+
+func (s *Supervisor) resolveWorkDir(procConfig config.ProcessConfig) string {
+	baseDir := s.configBaseDir()
+
+	if procConfig.WorkDir != "" {
+		return resolvePath(procConfig.WorkDir, baseDir)
+	}
+
+	if procConfig.Shell {
+		return baseDir
+	}
+
+	if filepath.IsAbs(procConfig.Command) {
+		return ""
+	}
+
+	if !hasPathSeparator(procConfig.Command) && commandExistsInPath(procConfig.Command) {
+		return ""
+	}
+
+	return baseDir
+}
+
+func (s *Supervisor) resolveCommandPath(command string, workDir string) (string, error) {
+	if command == "" {
+		return "", fmt.Errorf("command cannot be empty")
+	}
+
+	if filepath.IsAbs(command) {
+		return filepath.Clean(command), nil
+	}
+
+	if hasPathSeparator(command) {
+		return resolvePath(command, firstNonEmpty(workDir, s.configBaseDir())), nil
+	}
+
+	if resolvedCommand, err := exec.LookPath(command); err == nil {
+		return resolvedCommand, nil
+	}
+
+	return resolvePath(command, firstNonEmpty(workDir, s.configBaseDir())), nil
+}
+
+func (s *Supervisor) configBaseDir() string {
+	if s.configFilePath == "" {
+		return ""
+	}
+
+	return filepath.Dir(s.configFilePath)
+}
+
+func (s *Supervisor) setProcessCommand(proc *process.Process, cmd *exec.Cmd) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	proc.Cmd = cmd
+}
+
+func (s *Supervisor) clearProcessCommand(proc *process.Process) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	proc.Cmd = nil
+}
+
+func hasPathSeparator(input string) bool {
+	return filepath.Base(input) != input
+}
+
+func commandExistsInPath(command string) bool {
+	_, err := exec.LookPath(command)
+	return err == nil
+}
+
+func resolvePath(path string, baseDir string) string {
+	if filepath.IsAbs(path) || baseDir == "" {
+		return filepath.Clean(path)
+	}
+
+	return filepath.Join(baseDir, path)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
 }

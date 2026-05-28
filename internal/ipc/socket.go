@@ -1,3 +1,3 @@
 package ipc
 
-const DEFAULT_SOCKET_PATH = "/tmp/govisor.sock"
+const DEFAULT_SOCKET_PATH = "/tmp/govisor/govisor.sock"
