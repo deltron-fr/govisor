@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ type Supervisor struct {
 	processes      map[string]*process.Process
 	maxLogSize     int
 	configFilePath string
+	logFilePath    string
 	wg             sync.WaitGroup
 	mu             sync.RWMutex
 }
@@ -29,50 +31,49 @@ func NewSupervisor() *Supervisor {
 	}
 }
 
-func (s *Supervisor) SetConfigFilePath(path string) {
-	s.configFilePath = path
-}
-
+// Apply takes the process configuration from the provided ConfigFile(parsed)
+// and starts managing the processes accordingly.
+// It initializes the process runtimes, starts them, and sets up log rotation.
+// The method returns an error if there is an issue during the application of the configuration.
 func (s *Supervisor) Apply(pfInfo config.ConfigFile) error {
-	runtimes := make([]*process.Process, 0, len(pfInfo.Processes))
+	processes := make([]*process.Process, 0, len(pfInfo.Processes))
 
 	s.mu.Lock()
 	for _, procConfig := range pfInfo.Processes {
-		runtime := &process.Process{
+		p := &process.Process{
 			Config: procConfig,
 			Status: process.StatusStarting,
 		}
-		s.processes[procConfig.Name] = runtime
-		runtimes = append(runtimes, runtime)
+		s.processes[procConfig.Name] = p
+		processes = append(processes, p)
 	}
 	s.mu.Unlock()
 
-	go s.runProcesses(runtimes)
+	go s.runProcesses(processes)
 
 	go s.runLogRotation()
 
 	return nil
 }
 
-func (s *Supervisor) runProcesses(runtimes []*process.Process) {
-	for _, proc := range runtimes {
+// runProcesses starts the given processes and manages their lifecycle.
+func (s *Supervisor) runProcesses(processes []*process.Process) {
+	for _, proc := range processes {
 		s.wg.Add(1)
-		proc.Status = process.StatusStarting
 		proc.CreatedAt = time.Now()
 		proc.UpdatedAt = time.Now()
 
-		procLogFile := fmt.Sprintf("%s.log", proc.Config.Name)
-		f, err := os.OpenFile(procLogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		procLogFileName := filepath.Join(s.logFilePath, proc.Config.Name+".log") 
+		f, err := os.OpenFile(procLogFileName, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error opening log file:", err)
-			s.StopProcesses()
-			os.Exit(1)
+			log.Printf("Failed to open log file for process %s: %v\n", proc.Config.Name, err)
+			f = os.Stderr
 		}
 
 		procLog := f
 		proc.LogFile = procLog
 
-		go func(proc *process.Process, procLog *os.File) {
+		go func(proc *process.Process, procLog io.Writer) {
 			s.runProcess(proc, procLog)
 		}(proc, procLog)
 	}
@@ -80,9 +81,29 @@ func (s *Supervisor) runProcesses(runtimes []*process.Process) {
 	s.wg.Wait()
 }
 
-func (s *Supervisor) runProcess(proc *process.Process, procLog *os.File) {
-	defer s.wg.Done()
-	defer procLog.Close()
+
+// runProcess manages the full lifecycle of a supervised process, including startup,
+// monitoring, and restart logic. It runs in its own goroutine and blocks until the
+// process exits without requesting a restart.
+//
+// On exit or error, restart behavior is governed by the process Restart policy:
+//   - Never: the process is marked crashed or stopped and the goroutine returns.
+//   - UnlessStopped: restarts automatically unless the process exited cleanly.
+//   - Always: restarts on both clean and unclean exits.
+//
+// Failed starts and command preparation errors are both subject to the same restart
+// policy. Restart attempts use exponential backoff starting at 1s, capped at 30s
+// once the 5-minute ceiling is reached.
+//
+// procLog receives all process stdout, stderr, and supervisor-level diagnostic messages
+// for this process. If procLog is not os.Stderr, it is closed when the goroutine exits.
+func (s *Supervisor) runProcess(proc *process.Process, procLog io.Writer) {
+	defer func() {
+		s.wg.Done()
+		if procLog != os.Stderr {
+			procLog.(*os.File).Close()
+		}
+	}()
 
 	backoff := time.Second
 
@@ -195,58 +216,11 @@ func (s *Supervisor) StopProcesses() {
 	}
 }
 
-func (s *Supervisor) runLogRotation() {
-	ticker := time.NewTicker(45 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			for _, p := range s.processes {
-				s.maybeRotate(p)
-			}
-		}
-	}
-}
-
-func (s *Supervisor) maybeRotate(proc *process.Process) {
-	info, err := proc.LogFile.Stat()
-	if err != nil || info.Size() < int64(s.maxLogSize) {
-		return
-	}
-
-	oldLogFile := fmt.Sprintf("%s.1.log", proc.Config.Name)
-	procLogFile := fmt.Sprintf("%s.log", proc.Config.Name)
-	err = os.Rename(procLogFile, oldLogFile)
-	if err != nil {
-		log.Printf("couldn't rename file: %v", err)
-		return
-	}
-
-	f, err := os.OpenFile(procLogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error opening log file:", err)
-		return
-	}
-
-	oldFile := proc.LogFile
-	defer oldFile.Close()
-
-	proc.LogFile = f
-	if proc.Cmd != nil {
-		proc.Cmd.Stderr = f
-		proc.Cmd.Stdout = f
-	}
-}
-
-func updateStatus[T process.ProcessStatus](supervisor *Supervisor, status T, proc *process.Process) {
-	supervisor.mu.Lock()
-	defer supervisor.mu.Unlock()
-
-	proc.Status = process.ProcessStatus(status)
-	proc.UpdatedAt = time.Now()
-}
-
+// buildCommand constructs an exec.Cmd for the given process based on its config.
+// If the process is configured to run in a shell, it wraps the command with "sh -c"
+// and uses exec to replace the shell process, ensuring signals are delivered directly
+// to the command rather than the shell. Otherwise, it resolves the command path
+// and builds the command with its arguments(if any).
 func (s *Supervisor) buildCommand(proc *process.Process) (*exec.Cmd, error) {
 	workDir := s.resolveWorkDir(proc.Config)
 
@@ -266,6 +240,13 @@ func (s *Supervisor) buildCommand(proc *process.Process) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
+// resolveWorkDir determines the working directory for a process.
+// It follows this precedence:
+//  1. An explicit WorkDir in the process config, resolved relative to the config base dir.
+//  2. The config base dir for shell commands (since the command string may reference relative paths).
+//  3. An empty string for absolute command paths or commands found on PATH, letting the OS use
+//     the supervisor's own working directory.
+//  4. The config base dir as a fallback for relative command paths not found on PATH.
 func (s *Supervisor) resolveWorkDir(procConfig config.ProcessConfig) string {
 	baseDir := s.configBaseDir()
 
@@ -288,6 +269,12 @@ func (s *Supervisor) resolveWorkDir(procConfig config.ProcessConfig) string {
 	return baseDir
 }
 
+// resolveCommandPath returns the absolute path to the executable for the given command.
+//  1. Absolute paths are cleaned and returned as-is.
+//  2. Relative paths containing a separator are resolved against workDir (or the config
+//     base dir if workDir is empty).
+//  3. Plain command names (no separator) are looked up via PATH.
+//  4. If PATH lookup fails, the command is resolved relative to workDir.
 func (s *Supervisor) resolveCommandPath(command string, workDir string) (string, error) {
 	if command == "" {
 		return "", fmt.Errorf("command cannot be empty")
@@ -308,12 +295,12 @@ func (s *Supervisor) resolveCommandPath(command string, workDir string) (string,
 	return resolvePath(command, firstNonEmpty(workDir, s.configBaseDir())), nil
 }
 
-func (s *Supervisor) configBaseDir() string {
-	if s.configFilePath == "" {
-		return ""
-	}
+func updateStatus[T process.ProcessStatus](supervisor *Supervisor, status T, proc *process.Process) {
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
 
-	return filepath.Dir(s.configFilePath)
+	proc.Status = process.ProcessStatus(status)
+	proc.UpdatedAt = time.Now()
 }
 
 func (s *Supervisor) setProcessCommand(proc *process.Process, cmd *exec.Cmd) {
@@ -328,31 +315,4 @@ func (s *Supervisor) clearProcessCommand(proc *process.Process) {
 	defer s.mu.Unlock()
 
 	proc.Cmd = nil
-}
-
-func hasPathSeparator(input string) bool {
-	return filepath.Base(input) != input
-}
-
-func commandExistsInPath(command string) bool {
-	_, err := exec.LookPath(command)
-	return err == nil
-}
-
-func resolvePath(path string, baseDir string) string {
-	if filepath.IsAbs(path) || baseDir == "" {
-		return filepath.Clean(path)
-	}
-
-	return filepath.Join(baseDir, path)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-
-	return ""
 }

@@ -40,6 +40,10 @@ func (s *Server) Serve() {
 
 	_ = os.Remove(s.socketPath)
 
+	if err := os.MkdirAll(filepath.Dir(s.supervisor.GetLogFilePath()), 0o755); err != nil {
+		log.Fatalf("failed to create log directory: %v", err)
+	}
+
 	listener, err := net.Listen("unix", s.socketPath)
 	if err != nil {
 		log.Fatalf("Failed to listen on socket: %v", err)
