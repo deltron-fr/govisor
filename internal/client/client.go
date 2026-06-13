@@ -99,12 +99,12 @@ func resolveConfigPath(inputPath string) (string, error) {
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("could not get working directory: %w", err)
+		return "", err
 	}
 
 	resolved, err := filepath.EvalSymlinks(filepath.Join(cwd, inputPath))
 	if err != nil {
-		return "", fmt.Errorf("could not evaluate symlinks for the given path: %w", err)
+		return "", err
 	}
 
 	return resolved, nil

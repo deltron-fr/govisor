@@ -26,8 +26,9 @@ type Supervisor struct {
 
 func NewSupervisor() *Supervisor {
 	return &Supervisor{
-		processes:  make(map[string]*process.Process),
-		maxLogSize: 10 * (1 << 20),
+		processes:   make(map[string]*process.Process),
+		maxLogSize:  10 * (1 << 20),
+		logFilePath: "/tmp/govisor/log/",
 	}
 }
 
@@ -63,7 +64,7 @@ func (s *Supervisor) runProcesses(processes []*process.Process) {
 		proc.CreatedAt = time.Now()
 		proc.UpdatedAt = time.Now()
 
-		procLogFileName := filepath.Join(s.logFilePath, proc.Config.Name+".log") 
+		procLogFileName := filepath.Join(s.logFilePath, proc.Config.Name+".log")
 		f, err := os.OpenFile(procLogFileName, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
 			log.Printf("Failed to open log file for process %s: %v\n", proc.Config.Name, err)
@@ -80,7 +81,6 @@ func (s *Supervisor) runProcesses(processes []*process.Process) {
 
 	s.wg.Wait()
 }
-
 
 // runProcess manages the full lifecycle of a supervised process, including startup,
 // monitoring, and restart logic. It runs in its own goroutine and blocks until the

@@ -26,11 +26,11 @@ build: build-server build-client
 
 build-server:
 	@mkdir -p $(BIN_DIR)
-	@go build -o $(SERVER_BIN) ./cmd/server
+	@go build -o $(SERVER_BIN) ./cmd/govisor-server
 
 build-client:
 	@mkdir -p $(BIN_DIR)
-	@go build -o $(CLIENT_BIN) ./cmd/client
+	@go build -o $(CLIENT_BIN) ./cmd/govisor
 
 run-server: build-server
 	@exec ./$(SERVER_BIN)

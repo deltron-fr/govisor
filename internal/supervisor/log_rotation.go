@@ -1,9 +1,9 @@
 package supervisor
 
 import (
-	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/deltron-fr/govisor/internal/process"
@@ -29,15 +29,16 @@ func (s *Supervisor) maybeRotate(proc *process.Process) {
 		return
 	}
 
-	oldLogFile := fmt.Sprintf("%s.1.log", proc.Config.Name)
-	procLogFile := fmt.Sprintf("%s.log", proc.Config.Name)
-	err = os.Rename(procLogFile, oldLogFile)
+	oldLogFileName := filepath.Join(s.logFilePath, proc.Config.Name+".1.log")
+	procLogFileName := filepath.Join(s.logFilePath, proc.Config.Name+".log")
+
+	err = os.Rename(procLogFileName, oldLogFileName)
 	if err != nil {
 		log.Printf("couldn't rename file: %v", err)
 		return
 	}
 
-	f, err := os.OpenFile(procLogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(procLogFileName, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		log.Printf("couldn't open new log file: %v", err)
 		return
