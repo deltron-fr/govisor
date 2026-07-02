@@ -4,7 +4,7 @@
 
 `govisor` is a lightweight Linux-first supervisor for host processes. It is built for the case where you want one YAML file to define a small group of long-running programs and you want simple lifecycle control without introducing containers or a heavier orchestration layer.
 
-It already fits well for local development, single-VM apps, personal automation, and internal tools where `apply`, `status`, and `stop` are enough operational control.
+It already fits well for local development, single-VM apps, personal automation, and internal tools where `apply`, `status`, `logs`, and `stop` are enough operational control.
 
 ## Good Fits
 
@@ -18,33 +18,25 @@ It already fits well for local development, single-VM apps, personal automation,
 
 ## Install
 
-The current install flow uses two binaries:
-
-- `govisor` for the CLI
-- `govisor-server` for the supervisor server
-
-I plan to simplify this in a future change so installation only requires a single binary.
-
 Install by module path:
 
 ```sh
 go install github.com/deltron-fr/govisor/cmd/govisor@latest
-go install github.com/deltron-fr/govisor/cmd/govisor-server@latest
 ```
 
-This places the binaries in your `GOBIN` or `$(go env GOPATH)/bin`.
+This places the `govisor` binary in your `GOBIN` or `$(go env GOPATH)/bin`.
 
-To remove them, delete `govisor` and `govisor-server` from `GOBIN` or `$(go env GOPATH)/bin`.
+To remove it, delete `govisor` from `GOBIN` or `$(go env GOPATH)/bin`.
 
 ## Quick Start
 
 Start the supervisor server:
 
 ```sh
-govisor-server
+govisor start
 ```
 
-Stop it with `Ctrl-C` or by terminating the `govisor-server` process.
+Stop it with `Ctrl-C` or by terminating the `govisor start` process.
 
 In another terminal, create a config file:
 
@@ -82,6 +74,12 @@ Check status:
 govisor status
 ```
 
+Show recent logs for a process:
+
+```sh
+govisor logs api
+```
+
 Stop all supervised processes:
 
 ```sh
@@ -91,8 +89,10 @@ govisor stop
 ## Commands
 
 ```text
+govisor start
 govisor apply -f <config.yaml>
 govisor status
+govisor logs <process-name>
 govisor stop
 ```
 
@@ -202,6 +202,15 @@ The server socket and logs are currently under `/tmp` due to permission constrai
 
 `govisor` writes stdout and stderr for each process into its own log file.
 
+Retrieve the most recent log output for a supervised process with:
+
+```sh
+govisor logs <process-name>
+```
+
+The command returns up to the last 4 KiB of the process's current log file. The
+supervisor must be running and the named process must have been applied first.
+
 Current rotation behavior is intentionally simple:
 
 - rotation is size-based
@@ -227,7 +236,6 @@ More robust rotation is planned later, including archiving older logs, deleting 
 
 ## Planned Additions
 
-- configurable server startup from the CLI
 - configurable log and socket locations
 - stronger duplicate-name validation
 - more complete log rotation and retention
@@ -241,10 +249,36 @@ For local development, run:
 make help
 ```
 
+Build the binary:
+
+```sh
+make build
+```
+
+Run a command:
+
+```sh
+make run ARGS='status'
+```
+
+Start, inspect, and stop a background server:
+
+```sh
+make start
+make status
+make stop
+```
+
+Show recent logs for a supervised process:
+
+```sh
+make logs PROCESS='api'
+```
+
 Run tests with:
 
 ```sh
-go test ./...
+make test
 ```
 
 ## Contributing

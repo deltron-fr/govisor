@@ -1,6 +1,8 @@
 package supervisor
 
 import (
+	"bytes"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -94,5 +96,51 @@ func TestUpdateStatus(t *testing.T) {
 
 	if !proc.UpdatedAt.After(before) {
 		t.Fatalf("updateStatus() UpdatedAt = %v, want after %v", proc.UpdatedAt, before)
+	}
+}
+
+func TestRetrieveLogsReturnsLastFourKiB(t *testing.T) {
+	const tailSize = 4096
+
+	prefix := bytes.Repeat([]byte("x"), 128)
+	want := bytes.Repeat([]byte("log\n"), tailSize/4)
+	contents := append(prefix, want...)
+	logFileName := filepath.Join(t.TempDir(), "api.log")
+
+	if err := os.WriteFile(logFileName, contents, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	supervisor := &Supervisor{}
+	proc := &process.Process{LogFileName: logFileName}
+
+	got, err := supervisor.RetrieveLogs(proc)
+	if err != nil {
+		t.Fatalf("RetrieveLogs() error = %v", err)
+	}
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf("RetrieveLogs() returned %d bytes with unexpected content, want final %d bytes", len(got), len(want))
+	}
+}
+
+func TestRetrieveLogsReturnsEntireSmallLog(t *testing.T) {
+	want := []byte("api started\nrequest handled\n")
+	logFileName := filepath.Join(t.TempDir(), "api.log")
+
+	if err := os.WriteFile(logFileName, want, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	supervisor := &Supervisor{}
+	proc := &process.Process{LogFileName: logFileName}
+
+	got, err := supervisor.RetrieveLogs(proc)
+	if err != nil {
+		t.Fatalf("RetrieveLogs() error = %v", err)
+	}
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf("RetrieveLogs() = %q, want %q", got, want)
 	}
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,7 +16,6 @@ import (
 	"time"
 
 	"github.com/deltron-fr/govisor/internal/config"
-	"github.com/deltron-fr/govisor/internal/ipc"
 	"github.com/deltron-fr/govisor/internal/process"
 	"github.com/deltron-fr/govisor/internal/supervisor"
 	"go.yaml.in/yaml/v4"
@@ -53,6 +53,7 @@ func (s *Server) Serve() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /apply", s.handleApply)
 	mux.HandleFunc("GET /status", s.handleStatus)
+	mux.HandleFunc("GET /logs/{proc_name}", s.handleLogs)
 	mux.HandleFunc("GET /stop", s.handleStop)
 
 	srv := http.Server{
@@ -62,7 +63,7 @@ func (s *Server) Serve() {
 	}
 
 	go func() {
-		if err := srv.Serve(listener); err != nil {
+		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("Failed to serve: %v", err)
 		}
 	}()
@@ -83,7 +84,7 @@ func (s *Server) Serve() {
 		log.Printf("Failed to shutdown server gracefully: %v", err)
 	}
 
-	os.Remove(ipc.DEFAULT_SOCKET_PATH)
+	os.Remove(s.socketPath)
 	log.Println("socket has been removed. exiting.")
 }
 
@@ -142,6 +143,29 @@ func (s *Server) handleStop(w http.ResponseWriter, req *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	s.writeStatus(w, s.supervisor.Snapshots())
+}
+
+func (s *Server) handleLogs(w http.ResponseWriter, req *http.Request) {
+	name := req.PathValue("proc_name")
+	if name == "" {
+		http.Error(w, "missing process name", http.StatusBadRequest)
+		return
+	}
+
+	proc, err := s.supervisor.GetProcess(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	result, err := s.supervisor.RetrieveLogs(proc)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("server encountered an issue: %s", err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write(result)
 }
 
 func (s *Server) writeStatus(writer io.Writer, snapshots []process.Snapshot) {

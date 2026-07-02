@@ -73,6 +73,7 @@ func (s *Supervisor) runProcesses(processes []*process.Process) {
 
 		procLog := f
 		proc.LogFile = procLog
+		proc.LogFileName = procLogFileName
 
 		go func(proc *process.Process, procLog io.Writer) {
 			s.runProcess(proc, procLog)
@@ -181,6 +182,37 @@ func (s *Supervisor) runProcess(proc *process.Process, procLog io.Writer) {
 			return
 		}
 	}
+}
+
+func (s *Supervisor) RetrieveLogs(proc *process.Process) ([]byte, error) {
+	var bytesToRead int64 = 4096
+
+	file, err := os.Open(proc.LogFileName)
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if info.Size() < bytesToRead {
+		bytesToRead = info.Size()
+	}
+
+	_, err = file.Seek(-bytesToRead, io.SeekEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, bytesToRead)
+	_, err = io.ReadFull(file, buf)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf, nil
 }
 
 func (s *Supervisor) Snapshots() []process.Snapshot {

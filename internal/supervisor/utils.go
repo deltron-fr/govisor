@@ -1,8 +1,11 @@
 package supervisor
 
 import (
+	"fmt"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/deltron-fr/govisor/internal/process"
 )
 
 // Getters and Setters for working with private supervisor fields
@@ -25,6 +28,18 @@ func (s *Supervisor) configBaseDir() string {
 	}
 
 	return filepath.Dir(s.configFilePath)
+}
+
+func (s *Supervisor) GetProcess(name string) (*process.Process, error) {
+	s.mu.Lock()
+	process, ok := s.processes[name]
+	s.mu.Unlock()
+
+	if !ok {
+		return nil, fmt.Errorf("process %s: does not exist", name)
+	}
+
+	return process, nil
 }
 
 func hasPathSeparator(input string) bool {

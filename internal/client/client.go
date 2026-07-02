@@ -11,6 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/deltron-fr/govisor/internal/ipc"
+	"github.com/deltron-fr/govisor/internal/server"
 )
 
 const baseURL = "http://localhost"
@@ -32,7 +35,7 @@ func New(socketPath string) *Client {
 	}
 }
 
-func (c *Client) ApplyHandler(configPath string, writer io.Writer) error {
+func (c *Client) ApplyHandler(writer io.Writer, configPath string) error {
 	resolvedConfigPath, err := resolveConfigPath(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve config path: %w", err)
@@ -52,7 +55,21 @@ func (c *Client) StatusHandler(writer io.Writer) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	return c.do(req, os.Stdout)
+	return c.do(req, writer)
+}
+
+func (c *Client) LogsHandler(writer io.Writer, name string) error {
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/logs/"+name, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	return c.do(req, writer)
+}
+
+func (c *Client) StartHandler(writer io.Writer) {
+	server := server.New(ipc.DEFAULT_SOCKET_PATH)
+	server.Serve()
 }
 
 func (c *Client) StopHandler(writer io.Writer) error {
@@ -61,7 +78,7 @@ func (c *Client) StopHandler(writer io.Writer) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	return c.do(req, os.Stdout)
+	return c.do(req, writer)
 }
 
 func (c *Client) do(req *http.Request, out io.Writer) error {

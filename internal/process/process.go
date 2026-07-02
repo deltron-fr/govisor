@@ -36,12 +36,13 @@ const (
 )
 
 type Process struct {
-	Cmd       *exec.Cmd
-	LogFile   *os.File
-	Config    config.ProcessConfig
-	Status    ProcessStatus
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Cmd         *exec.Cmd
+	LogFile     *os.File
+	LogFileName string
+	Config      config.ProcessConfig
+	Status      ProcessStatus
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type Snapshot struct {

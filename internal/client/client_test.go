@@ -62,6 +62,36 @@ func TestDoReturnsTrimmedErrorBody(t *testing.T) {
 	}
 }
 
+func TestLogsHandlerRequestsAndWritesProcessLogs(t *testing.T) {
+	client := &Client{
+		httpClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.Method != http.MethodGet {
+					t.Fatalf("LogsHandler() method = %q, want %q", req.Method, http.MethodGet)
+				}
+
+				if req.URL.Path != "/logs/api" {
+					t.Fatalf("LogsHandler() path = %q, want %q", req.URL.Path, "/logs/api")
+				}
+
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader("api started\nrequest handled\n")),
+				}, nil
+			}),
+		},
+	}
+
+	var out bytes.Buffer
+	if err := client.LogsHandler(&out, "api"); err != nil {
+		t.Fatalf("LogsHandler() error = %v", err)
+	}
+
+	if got, want := out.String(), "api started\nrequest handled\n"; got != want {
+		t.Fatalf("LogsHandler() wrote %q, want %q", got, want)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

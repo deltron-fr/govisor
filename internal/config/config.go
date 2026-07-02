@@ -15,6 +15,7 @@ type ProcessConfig struct {
 	Description string   `yaml:"description"`
 	Command     string   `yaml:"command"`
 	Args        []string `yaml:"args,omitempty"`
+	Env         []string `yaml:"env,omitempty"`
 	WorkDir     string   `yaml:"workdir,omitempty"`
 	Restart     Restart  `yaml:"restart,omitempty"` // supports: never, always, on-failure, and unless-stopped
 	Shell       bool     `yaml:"shell,omitempty"`

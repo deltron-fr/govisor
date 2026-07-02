@@ -12,7 +12,7 @@ var applyCmd = &cobra.Command{
 	Short:   "Apply the process configuration",
 	Long:    "Apply the process configuration defined in the YAML file to start and manage the processes.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		err := appClient.ApplyHandler(file, cmd.OutOrStdout())
+		err := appClient.ApplyHandler(cmd.OutOrStderr(), file)
 		if err != nil {
 			return err
 		}
