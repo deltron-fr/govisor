@@ -40,7 +40,6 @@ func (s *Server) Serve() {
 
 	_ = os.Remove(s.socketPath)
 
-	fmt.Println(s.supervisor.GetLogFilePath())
 	if err := os.MkdirAll(s.supervisor.GetLogFilePath(), 0o755); err != nil {
 		log.Fatalf("failed to create log directory: %v", err)
 	}
@@ -68,6 +67,8 @@ func (s *Server) Serve() {
 			log.Fatalf("Failed to serve: %v", err)
 		}
 	}()
+
+	go s.supervisor.RunLogRotation()
 
 	sigChan := make(chan os.Signal, 1)
 

@@ -1,10 +1,7 @@
 # govisor
 
-![Status: WIP](https://img.shields.io/badge/status-wip-orange)
-
 `govisor` is a lightweight Linux-first supervisor for host processes. It is built for the case where you want one YAML file to define a small group of long-running programs and you want simple lifecycle control without introducing containers or a heavier orchestration layer.
 
-It already fits well for local development, single-VM apps, personal automation, and internal tools where `apply`, `status`, `logs`, and `stop` are enough operational control.
 
 ## Good Fits
 
@@ -203,46 +200,6 @@ processes:
     restart: on-failure
 ```
 
-### Example: Checking Environment Variables
-
-Direct commands receive configured variables through their process environment:
-
-```yaml
-name: environment-check
-processes:
-  - name: direct-environment
-    command: printenv
-    args: ["APP_ENV"]
-    environment:
-      APP_ENV: production
-    restart: never
-```
-
-After applying the config, `govisor logs direct-environment` should contain:
-
-```text
-production
-```
-
-Shell-based commands can also expand configured variables. Variables inherited
-by the `govisor` server, such as `HOME`, remain available:
-
-```yaml
-name: shell-environment-check
-processes:
-  - name: shell-environment
-    command: printf 'app_env=%s port=%s home=%s\n' "$APP_ENV" "$PORT" "$HOME"
-    environment:
-      APP_ENV: development
-      PORT: "8080"
-    shell: true
-    restart: never
-```
-
-Run `govisor logs shell-environment` to verify the configured values and the
-inherited `HOME` value. Environment-variable expansion in `command` is performed
-by the shell only when `shell: true`; direct commands should read variables from
-their process environment.
 
 ## Runtime Paths
 
@@ -280,8 +237,7 @@ Retrieve the most recent log output for a supervised process with:
 govisor logs <process-name>
 ```
 
-The command returns up to the last 4 KiB of the process's current log file. The
-supervisor must be running and the named process must have been applied first.
+The command returns up to the last 4 KiB of the process's current log file.
 
 Current rotation behavior is intentionally simple:
 
@@ -310,7 +266,6 @@ More robust rotation is planned later, including archiving older logs, deleting 
 
 ## Planned Additions
 
-- configurable log and socket locations
 - `depends_on` process dependency graphs
 - more complete log rotation and retention
 - cgroup-based memory controls on Linux
@@ -323,37 +278,6 @@ For local development, run:
 make help
 ```
 
-Build the binary:
-
-```sh
-make build
-```
-
-Run a command:
-
-```sh
-make run ARGS='status'
-```
-
-Start, inspect, and stop a background server:
-
-```sh
-make start
-make status
-make stop
-```
-
-Show recent logs for a supervised process:
-
-```sh
-make logs PROCESS='api'
-```
-
-Run tests with:
-
-```sh
-make test
-```
 
 ## Contributing
 

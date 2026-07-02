@@ -20,7 +20,7 @@ const baseURL = "http://localhost"
 
 type Client struct {
 	httpClient *http.Client
-	socketPath string
+	socketPth  string
 }
 
 func New(socketPath string) *Client {
@@ -75,7 +75,6 @@ func (c *Client) StartHandler(writer io.Writer) error {
 	}
 
 	server := server.New(path)
-	c.socketPath = path
 	server.Serve()
 	return nil
 }

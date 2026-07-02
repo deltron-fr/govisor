@@ -9,16 +9,18 @@ import (
 	"github.com/deltron-fr/govisor/internal/process"
 )
 
-func (s *Supervisor) runLogRotation() {
+func (s *Supervisor) RunLogRotation() {
 	ticker := time.NewTicker(45 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
+			s.mu.Lock()
 			for _, p := range s.processes {
 				s.maybeRotate(p)
 			}
+			s.mu.Unlock()
 		}
 	}
 }

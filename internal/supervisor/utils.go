@@ -47,7 +47,6 @@ func configureLogPath() string {
 	stateHomeDir, exists := os.LookupEnv("XDG_STATE_HOME")
 	if exists {
 		if stateHomeDir != "" {
-			fmt.Println("used xdg state home")
 			return filepath.Join(stateHomeDir, "govisor/logs")
 		}
 	}

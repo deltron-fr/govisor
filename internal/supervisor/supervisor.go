@@ -60,8 +60,6 @@ func (s *Supervisor) Apply(pfInfo config.ConfigFile) error {
 
 	go s.runProcesses(processes)
 
-	go s.runLogRotation()
-
 	return nil
 }
 
@@ -189,7 +187,7 @@ func (s *Supervisor) runProcess(proc *process.Process, procLog io.Writer) {
 			continue
 		}
 
-		if proc.Config.Restart == config.Never || proc.Config.Restart == config.UnlessStopped {
+		if proc.Config.Restart == config.Never || proc.Config.Restart == config.UnlessStopped || proc.Config.Restart == config.OnFailure {
 			updateStatus(s, process.StatusStopped, proc)
 			return
 		}
@@ -253,6 +251,7 @@ func (s *Supervisor) StopProcesses() {
 			continue
 		}
 
+		proc.Config.Restart = config.Never
 		if err := proc.Cmd.Process.Signal(syscall.SIGTERM); err != nil {
 			// TODO: this should be piped to the supervisor's log file
 			log.Printf("failed to send sigterm: %v\n", err)
