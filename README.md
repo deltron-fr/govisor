@@ -46,18 +46,25 @@ processes:
   - name: api
     command: go
     args: ["run", "./cmd/api"]
+    environment:
+      APP_ENV: development
+      PORT: "8080"
     workdir: ./services/api
     restart: on-failure
 
   - name: worker
     command: go
     args: ["run", "./cmd/worker"]
+    environment:
+      QUEUE_NAME: background-jobs
     workdir: ./services/worker
     restart: always
 
   - name: frontend
     command: npm
     args: ["run", "dev"]
+    environment:
+      NODE_ENV: development
     workdir: ./frontend
     restart: unless-stopped
 ```
@@ -117,6 +124,9 @@ processes:
     description: optional description
     command: go
     args: ["run", "./cmd/api"]
+    environment:
+      APP_ENV: development
+      PORT: "8080"
     workdir: ./services/api
     restart: on-failure
     shell: false
@@ -132,6 +142,7 @@ processes:
 | `processes[].description` | no | Human-readable description. |
 | `processes[].command` | yes | Executable or command string to run. |
 | `processes[].args` | no | Arguments passed to the command when `shell` is `false`. |
+| `processes[].environment` | no | Environment variables added to the inherited environment. Configured values override inherited variables with the same name. |
 | `processes[].workdir` | no | Working directory for the process. Relative paths are resolved from the config file directory. |
 | `processes[].restart` | no | Restart policy: `always`, `never`, `on-failure`, `unless-stopped`. If omitted, the default is `always`. |
 | `processes[].shell` | no | If `true`, runs the command through `sh -c`. |
@@ -143,11 +154,16 @@ name: side-project
 processes:
   - name: app
     command: ./bin/app
+    environment:
+      APP_ENV: production
+      HTTP_PORT: "8080"
     workdir: .
     restart: always
 
   - name: poller
     command: ./bin/poller
+    environment:
+      POLL_INTERVAL: 30s
     workdir: .
     restart: on-failure
 
@@ -164,6 +180,9 @@ name: local-dev
 processes:
   - name: frontend
     command: npm run dev
+    environment:
+      NODE_ENV: development
+      API_BASE_URL: http://localhost:8080
     workdir: ./frontend
     shell: true
     restart: unless-stopped
@@ -175,11 +194,55 @@ processes:
     restart: always
 
   - name: api
-    command: go run ./cmd/api
+    command: go run ./cmd/api --listen "$LISTEN_ADDRESS"
+    environment:
+      APP_ENV: development
+      LISTEN_ADDRESS: 127.0.0.1:8080
     workdir: ./backend
     shell: true
     restart: on-failure
 ```
+
+### Example: Checking Environment Variables
+
+Direct commands receive configured variables through their process environment:
+
+```yaml
+name: environment-check
+processes:
+  - name: direct-environment
+    command: printenv
+    args: ["APP_ENV"]
+    environment:
+      APP_ENV: production
+    restart: never
+```
+
+After applying the config, `govisor logs direct-environment` should contain:
+
+```text
+production
+```
+
+Shell-based commands can also expand configured variables. Variables inherited
+by the `govisor` server, such as `HOME`, remain available:
+
+```yaml
+name: shell-environment-check
+processes:
+  - name: shell-environment
+    command: printf 'app_env=%s port=%s home=%s\n' "$APP_ENV" "$PORT" "$HOME"
+    environment:
+      APP_ENV: development
+      PORT: "8080"
+    shell: true
+    restart: never
+```
+
+Run `govisor logs shell-environment` to verify the configured values and the
+inherited `HOME` value. Environment-variable expansion in `command` is performed
+by the shell only when `shell: true`; direct commands should read variables from
+their process environment.
 
 ## Runtime Paths
 
@@ -225,6 +288,7 @@ More robust rotation is planned later, including archiving older logs, deleting 
 
 - `govisor` supervises host processes, not containers.
 - Commands can be executed directly or through `sh -c` with `shell: true`.
+- Configured `environment` values are added to the supervisor's inherited environment for both direct and shell-based commands.
 - Relative `workdir` paths are resolved from the YAML file location.
 - Restart backoff starts at 1 second and grows up to 30 seconds.
 - When the server shuts down, it sends `SIGTERM` to supervised processes and attempts a graceful stop.

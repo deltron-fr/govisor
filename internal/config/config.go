@@ -11,14 +11,14 @@ type ConfigFile struct {
 }
 
 type ProcessConfig struct {
-	Name        string   `yaml:"name"`
-	Description string   `yaml:"description"`
-	Command     string   `yaml:"command"`
-	Args        []string `yaml:"args,omitempty"`
-	Env         []string `yaml:"env,omitempty"`
-	WorkDir     string   `yaml:"workdir,omitempty"`
-	Restart     Restart  `yaml:"restart,omitempty"` // supports: never, always, on-failure, and unless-stopped
-	Shell       bool     `yaml:"shell,omitempty"`
+	Name        string            `yaml:"name"`
+	Description string            `yaml:"description"`
+	Command     string            `yaml:"command"`
+	Args        []string          `yaml:"args,omitempty"`
+	Env         map[string]string `yaml:"environment,omitempty"`
+	WorkDir     string            `yaml:"workdir,omitempty"`
+	Restart     Restart           `yaml:"restart,omitempty"` // supports: never, always, on-failure, and unless-stopped
+	Shell       bool              `yaml:"shell,omitempty"`
 }
 
 type Restart int

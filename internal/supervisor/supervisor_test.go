@@ -144,3 +144,83 @@ func TestRetrieveLogsReturnsEntireSmallLog(t *testing.T) {
 		t.Fatalf("RetrieveLogs() = %q, want %q", got, want)
 	}
 }
+
+func TestRunProcessPassesEnvironmentToDirectCommand(t *testing.T) {
+	t.Setenv("GOVISOR_TEST_INHERITED", "from-parent")
+	t.Setenv("GOVISOR_TEST_OVERRIDE", "from-parent")
+
+	proc := &process.Process{
+		Config: config.ProcessConfig{
+			Name:    "direct-environment",
+			Command: "printenv",
+			Args: []string{
+				"GOVISOR_TEST_CONFIGURED",
+				"GOVISOR_TEST_OVERRIDE",
+				"GOVISOR_TEST_INHERITED",
+			},
+			Env: map[string]string{
+				"GOVISOR_TEST_CONFIGURED": "from-config",
+				"GOVISOR_TEST_OVERRIDE":   "from-config",
+			},
+			Restart: config.Never,
+		},
+	}
+
+	got := runProcessAndReadLog(t, proc)
+	want := "from-config\nfrom-config\nfrom-parent\n"
+	if got != want {
+		t.Fatalf("runProcess() log = %q, want %q", got, want)
+	}
+}
+
+func TestRunProcessExpandsEnvironmentInShellCommand(t *testing.T) {
+	t.Setenv("GOVISOR_TEST_INHERITED", "from-parent")
+	t.Setenv("GOVISOR_TEST_OVERRIDE", "from-parent")
+
+	proc := &process.Process{
+		Config: config.ProcessConfig{
+			Name: "shell-environment",
+			Command: `printf '%s|%s|%s\n' \
+"$GOVISOR_TEST_CONFIGURED" \
+"$GOVISOR_TEST_OVERRIDE" \
+"$GOVISOR_TEST_INHERITED"`,
+			Env: map[string]string{
+				"GOVISOR_TEST_CONFIGURED": "from-config",
+				"GOVISOR_TEST_OVERRIDE":   "from-config",
+			},
+			Restart: config.Never,
+			Shell:   true,
+		},
+	}
+
+	got := runProcessAndReadLog(t, proc)
+	want := "from-config|from-config|from-parent\n"
+	if got != want {
+		t.Fatalf("runProcess() log = %q, want %q", got, want)
+	}
+}
+
+func runProcessAndReadLog(t *testing.T, proc *process.Process) string {
+	t.Helper()
+
+	logFileName := filepath.Join(t.TempDir(), proc.Config.Name+".log")
+	logFile, err := os.Create(logFileName)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	supervisor := NewSupervisor()
+	supervisor.wg.Add(1)
+	supervisor.runProcess(proc, logFile)
+
+	contents, err := os.ReadFile(logFileName)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	if proc.Status != process.StatusStopped {
+		t.Fatalf("runProcess() status = %v, want %v", proc.Status, process.StatusStopped)
+	}
+
+	return string(contents)
+}

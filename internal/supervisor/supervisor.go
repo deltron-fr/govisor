@@ -131,6 +131,10 @@ func (s *Supervisor) runProcess(proc *process.Process, procLog io.Writer) {
 
 		cmd.Stdout = procLog
 		cmd.Stderr = procLog
+		if vars := parseEnvVars(proc.Config.Env); vars != nil {
+			cmd.Env = os.Environ()
+			cmd.Env = append(cmd.Env, vars...)
+		}
 
 		err = cmd.Start()
 		if err != nil {
@@ -325,6 +329,19 @@ func (s *Supervisor) resolveCommandPath(command string, workDir string) (string,
 	}
 
 	return resolvePath(command, firstNonEmpty(workDir, s.configBaseDir())), nil
+}
+
+func parseEnvVars(env map[string]string) []string {
+	if env == nil {
+		return nil
+	}
+
+	var envVars []string
+	for key, value := range env {
+		envVars = append(envVars, fmt.Sprintf("%s=%s", key, value))
+	}
+
+	return envVars
 }
 
 func updateStatus[T process.ProcessStatus](supervisor *Supervisor, status T, proc *process.Process) {
