@@ -7,8 +7,7 @@ var startCommand = &cobra.Command{
 	Short: "Start the govisor server",
 	Long:  "Start the govisor server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		appClient.StartHandler(cmd.OutOrStderr())
-		return nil
+		return appClient.StartHandler(cmd.OutOrStderr())
 	},
 }
 

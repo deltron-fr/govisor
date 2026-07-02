@@ -20,6 +20,7 @@ const baseURL = "http://localhost"
 
 type Client struct {
 	httpClient *http.Client
+	socketPath string
 }
 
 func New(socketPath string) *Client {
@@ -67,9 +68,16 @@ func (c *Client) LogsHandler(writer io.Writer, name string) error {
 	return c.do(req, writer)
 }
 
-func (c *Client) StartHandler(writer io.Writer) {
-	server := server.New(ipc.DEFAULT_SOCKET_PATH)
+func (c *Client) StartHandler(writer io.Writer) error {
+	path, err := ipc.SocketPath()
+	if err != nil {
+		return fmt.Errorf("error configuring socket path: %v", err)
+	}
+
+	server := server.New(path)
+	c.socketPath = path
 	server.Serve()
+	return nil
 }
 
 func (c *Client) StopHandler(writer io.Writer) error {

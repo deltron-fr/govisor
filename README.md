@@ -246,20 +246,29 @@ their process environment.
 
 ## Runtime Paths
 
-Current defaults are:
+`govisor` uses per-user runtime and state directories.
 
 ```text
-Socket: /tmp/govisor/govisor.sock
-Logs:   /tmp/govisor/log/
+Socket: $XDG_RUNTIME_DIR/govisor/govisor.sock
+Logs:   $XDG_STATE_HOME/govisor/logs/
 ```
 
-Each process writes to:
+When `XDG_RUNTIME_DIR` is unset or empty, the socket falls back to:
 
 ```text
-/tmp/govisor/log/<process-name>.log
+~/.local/state/govisor/run/govisor.sock
 ```
 
-The server socket and logs are currently under `/tmp` due to permission constraints in the current implementation. That location is expected to change.
+When `XDG_STATE_HOME` is unset or empty, logs fall back to:
+
+```text
+~/.local/state/govisor/logs/
+```
+
+Each process writes to `<logs-directory>/<process-name>.log`. Govisor creates
+the required runtime and log directories automatically. The server and CLI must
+resolve the same socket path, so they should run with the same
+`XDG_RUNTIME_DIR` value.
 
 ## Logging
 
@@ -295,13 +304,14 @@ More robust rotation is planned later, including archiving older logs, deleting 
 
 ## Notes
 
-- Use unique process names in a config. Duplicate names are not rejected yet.
+- A configuration name can only be applied once while the server is running.
+- Use process names that are unique across all applied configurations.
 - This project is best treated as Linux-first today.
 
 ## Planned Additions
 
 - configurable log and socket locations
-- stronger duplicate-name validation
+- `depends_on` process dependency graphs
 - more complete log rotation and retention
 - cgroup-based memory controls on Linux
 

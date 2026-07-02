@@ -40,7 +40,8 @@ func (s *Server) Serve() {
 
 	_ = os.Remove(s.socketPath)
 
-	if err := os.MkdirAll(filepath.Dir(s.supervisor.GetLogFilePath()), 0o755); err != nil {
+	fmt.Println(s.supervisor.GetLogFilePath())
+	if err := os.MkdirAll(s.supervisor.GetLogFilePath(), 0o755); err != nil {
 		log.Fatalf("failed to create log directory: %v", err)
 	}
 
@@ -121,7 +122,7 @@ func (s *Server) handleApply(w http.ResponseWriter, req *http.Request) {
 
 	err = s.supervisor.Apply(pcInfo)
 	if err != nil {
-		http.Error(w, "Failed to start supervisor: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to apply configuration: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 

@@ -16,19 +16,21 @@ import (
 )
 
 type Supervisor struct {
-	processes      map[string]*process.Process
-	maxLogSize     int
-	configFilePath string
-	logFilePath    string
-	wg             sync.WaitGroup
-	mu             sync.RWMutex
+	processConfigSet map[string][]*process.Process // maps config-name to the set of processes under it
+	processes        map[string]*process.Process   // maps a single process name to its process object
+	maxLogSize       int
+	configFilePath   string
+	logFilePath      string
+	wg               sync.WaitGroup
+	mu               sync.RWMutex
 }
 
 func NewSupervisor() *Supervisor {
 	return &Supervisor{
-		processes:   make(map[string]*process.Process),
-		maxLogSize:  10 * (1 << 20),
-		logFilePath: "/tmp/govisor/log/",
+		processConfigSet: make(map[string][]*process.Process),
+		processes:        make(map[string]*process.Process),
+		maxLogSize:       10 * (1 << 20),
+		logFilePath:      configureLogPath(),
 	}
 }
 
@@ -40,6 +42,12 @@ func (s *Supervisor) Apply(pfInfo config.ConfigFile) error {
 	processes := make([]*process.Process, 0, len(pfInfo.Processes))
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.processConfigSet[pfInfo.Name]; ok {
+		return fmt.Errorf("process configuration with the given name already exists")
+	}
+
 	for _, procConfig := range pfInfo.Processes {
 		p := &process.Process{
 			Config: procConfig,
@@ -48,7 +56,7 @@ func (s *Supervisor) Apply(pfInfo config.ConfigFile) error {
 		s.processes[procConfig.Name] = p
 		processes = append(processes, p)
 	}
-	s.mu.Unlock()
+	s.processConfigSet[pfInfo.Name] = processes
 
 	go s.runProcesses(processes)
 

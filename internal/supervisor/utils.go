@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 
@@ -40,6 +41,23 @@ func (s *Supervisor) GetProcess(name string) (*process.Process, error) {
 	}
 
 	return process, nil
+}
+
+func configureLogPath() string {
+	stateHomeDir, exists := os.LookupEnv("XDG_STATE_HOME")
+	if exists {
+		if stateHomeDir != "" {
+			fmt.Println("used xdg state home")
+			return filepath.Join(stateHomeDir, "govisor/logs")
+		}
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	return filepath.Join(homeDir, ".local/state/govisor/logs")
 }
 
 func hasPathSeparator(input string) bool {
