@@ -208,10 +208,12 @@ func runProcessAndReadLog(t *testing.T, proc *process.Process) string {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	proc.LogFile = &LogWriter{file: logFile}
+	proc.LogFileName = logFileName
 
 	supervisor := NewSupervisor()
 	supervisor.wg.Add(1)
-	supervisor.runProcess(proc, logFile)
+	supervisor.runProcess(proc)
 
 	contents, err := os.ReadFile(logFileName)
 	if err != nil {

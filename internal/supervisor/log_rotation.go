@@ -4,10 +4,30 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/deltron-fr/govisor/internal/process"
 )
+
+type LogWriter struct {
+	mu   sync.Mutex
+	file *os.File
+}
+
+func (l *LogWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.file.Write(p)
+}
+
+func (l *LogWriter) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.file.Close()
+}
 
 func (s *Supervisor) RunLogRotation() {
 	ticker := time.NewTicker(45 * time.Second)
@@ -26,8 +46,21 @@ func (s *Supervisor) RunLogRotation() {
 }
 
 func (s *Supervisor) maybeRotate(proc *process.Process) {
-	info, err := proc.LogFile.Stat()
-	if err != nil || info.Size() < int64(s.maxLogSize) {
+	logWriter, ok := proc.LogFile.(*LogWriter)
+	if !ok {
+		log.Printf("couldn't rotate log for process %s: invalid log writer", proc.Config.Name)
+		return
+	}
+
+	currentFile := logWriter.file
+
+	info, err := currentFile.Stat()
+	if err != nil {
+		log.Printf("couldn't get the necessary file info: %v", err)
+		return
+	}
+
+	if info.Size() < int64(s.maxLogSize) {
 		return
 	}
 
@@ -46,14 +79,11 @@ func (s *Supervisor) maybeRotate(proc *process.Process) {
 		return
 	}
 
-	oldFile := proc.LogFile
-	defer oldFile.Close()
-
-	s.mu.Lock()
-	proc.LogFile = f
-	if proc.Cmd != nil {
-		proc.Cmd.Stderr = f
-		proc.Cmd.Stdout = f
+	if err := currentFile.Close(); err != nil {
+		log.Printf("couldn't close rotated log file: %v", err)
+		f.Close()
+		return
 	}
-	s.mu.Unlock()
+
+	logWriter.file = f
 }

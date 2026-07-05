@@ -66,7 +66,6 @@ func (s *Supervisor) Apply(pfInfo config.ConfigFile) error {
 // runProcesses starts the given processes and manages their lifecycle.
 func (s *Supervisor) runProcesses(processes []*process.Process) {
 	for _, proc := range processes {
-		s.wg.Add(1)
 		proc.CreatedAt = time.Now()
 		proc.UpdatedAt = time.Now()
 
@@ -74,16 +73,21 @@ func (s *Supervisor) runProcesses(processes []*process.Process) {
 		f, err := os.OpenFile(procLogFileName, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
 			log.Printf("Failed to open log file for process %s: %v\n", proc.Config.Name, err)
-			f = os.Stderr
+			updateStatus(s, process.StatusCrashed, proc)
+			continue
 		}
 
-		procLog := f
-		proc.LogFile = procLog
+		logWriter := LogWriter{
+			file: f,
+		}
+
+		proc.LogFile = &logWriter
 		proc.LogFileName = procLogFileName
 
-		go func(proc *process.Process, procLog io.Writer) {
-			s.runProcess(proc, procLog)
-		}(proc, procLog)
+		s.wg.Add(1)
+		go func(proc *process.Process) {
+			s.runProcess(proc)
+		}(proc)
 	}
 
 	s.wg.Wait()
@@ -104,17 +108,16 @@ func (s *Supervisor) runProcesses(processes []*process.Process) {
 //
 // procLog receives all process stdout, stderr, and supervisor-level diagnostic messages
 // for this process. If procLog is not os.Stderr, it is closed when the goroutine exits.
-func (s *Supervisor) runProcess(proc *process.Process, procLog io.Writer) {
+func (s *Supervisor) runProcess(proc *process.Process) {
 	defer func() {
 		s.wg.Done()
-		if procLog != os.Stderr {
-			procLog.(*os.File).Close()
-		}
+		proc.LogFile.Close()
 	}()
 
 	backoff := time.Second
 
 	for {
+		procLog := proc.LogFile
 		cmd, err := s.buildCommand(proc)
 		if err != nil {
 			fmt.Fprintf(procLog, "Failed to prepare process %s: %v\n", proc.Config.Name, err)
