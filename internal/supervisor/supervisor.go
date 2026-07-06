@@ -18,9 +18,8 @@ import (
 type Supervisor struct {
 	processConfigSet map[string][]*process.Process // maps config-name to the set of processes under it
 	processes        map[string]*process.Process   // maps a single process name to its process object
-	maxLogSize       int
 	configFilePath   string
-	logFilePath      string
+	logFilePath      LogWriter
 	wg               sync.WaitGroup
 	mu               sync.RWMutex
 }
@@ -29,8 +28,6 @@ func NewSupervisor() *Supervisor {
 	return &Supervisor{
 		processConfigSet: make(map[string][]*process.Process),
 		processes:        make(map[string]*process.Process),
-		maxLogSize:       10 * (1 << 20),
-		logFilePath:      configureLogPath(),
 	}
 }
 
@@ -45,7 +42,20 @@ func (s *Supervisor) Apply(pfInfo config.ConfigFile) error {
 	defer s.mu.Unlock()
 
 	if _, ok := s.processConfigSet[pfInfo.Name]; ok {
-		return fmt.Errorf("process configuration with the given name already exists")
+		return fmt.Errorf("process configuration %q already exists", pfInfo.Name)
+	}
+
+	processNames := make(map[string]struct{})
+	for _, procConfig := range pfInfo.Processes {
+		if _, ok := processNames[procConfig.Name]; ok {
+			return fmt.Errorf("duplicate process name %q in config %q", procConfig.Name, pfInfo.Name)
+		}
+
+		if _, ok := s.processes[procConfig.Name]; ok {
+			return fmt.Errorf("process name %q already exists in supervisor", procConfig.Name)
+		}
+
+		processNames[procConfig.Name] = struct{}{}
 	}
 
 	for _, procConfig := range pfInfo.Processes {
@@ -69,19 +79,19 @@ func (s *Supervisor) runProcesses(processes []*process.Process) {
 		proc.CreatedAt = time.Now()
 		proc.UpdatedAt = time.Now()
 
-		procLogFileName := filepath.Join(s.logFilePath, proc.Config.Name+".log")
+		logWriter := NewLogWriter()
+
+		procLogFileName := filepath.Join(logWriter.path, proc.Config.Name+".log")
 		f, err := os.OpenFile(procLogFileName, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
-			log.Printf("Failed to open log file for process %s: %v\n", proc.Config.Name, err)
+			log.Printf("failed to open log file %q for process %q: %v\n", procLogFileName, proc.Config.Name, err)
 			updateStatus(s, process.StatusCrashed, proc)
 			continue
 		}
 
-		logWriter := LogWriter{
-			file: f,
-		}
+		logWriter.file = f
 
-		proc.LogFile = &logWriter
+		proc.LogFile = logWriter
 		proc.LogFileName = procLogFileName
 
 		s.wg.Add(1)
@@ -120,7 +130,7 @@ func (s *Supervisor) runProcess(proc *process.Process) {
 		procLog := proc.LogFile
 		cmd, err := s.buildCommand(proc)
 		if err != nil {
-			fmt.Fprintf(procLog, "Failed to prepare process %s: %v\n", proc.Config.Name, err)
+			fmt.Fprintf(procLog, "failed to prepare process %q: %v\n", proc.Config.Name, err)
 
 			if proc.Config.Restart == config.Never {
 				updateStatus(s, process.StatusCrashed, proc)
@@ -160,7 +170,7 @@ func (s *Supervisor) runProcess(proc *process.Process) {
 				backoff = 30 * time.Second
 			}
 
-			fmt.Fprintf(procLog, "Failed to start process %s: %v\n", proc.Config.Name, err)
+			fmt.Fprintf(procLog, "failed to start process %q with command %q: %v\n", proc.Config.Name, proc.Config.Command, err)
 			continue
 		}
 
@@ -172,7 +182,7 @@ func (s *Supervisor) runProcess(proc *process.Process) {
 		err = cmd.Wait()
 		s.clearProcessCommand(proc)
 		if err != nil {
-			fmt.Fprintf(procLog, "Process %s exited with error: %v\n", proc.Config.Name, err)
+			fmt.Fprintf(procLog, "process %q exited with error: %v\n", proc.Config.Name, err)
 
 			if proc.Config.Restart == config.Never {
 				updateStatus(s, process.StatusCrashed, proc)
@@ -257,7 +267,7 @@ func (s *Supervisor) StopProcesses() {
 		proc.Config.Restart = config.Never
 		if err := proc.Cmd.Process.Signal(syscall.SIGTERM); err != nil {
 			// TODO: this should be piped to the supervisor's log file
-			log.Printf("failed to send sigterm: %v\n", err)
+			log.Printf("failed to send sigterm to process %q: %v\n", proc.Config.Name, err)
 		}
 	}
 }

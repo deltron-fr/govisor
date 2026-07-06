@@ -35,18 +35,18 @@ func New(socketPath string) *Server {
 
 func (s *Server) Serve() {
 	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0o755); err != nil {
-		log.Fatalf("failed to create socket directory: %v", err)
+		log.Fatalf("failed to create socket directory %q: %v", filepath.Dir(s.socketPath), err)
 	}
 
 	_ = os.Remove(s.socketPath)
 
 	if err := os.MkdirAll(s.supervisor.GetLogFilePath(), 0o755); err != nil {
-		log.Fatalf("failed to create log directory: %v", err)
+		log.Fatalf("failed to create log directory %q: %v", s.supervisor.GetLogFilePath(), err)
 	}
 
 	listener, err := net.Listen("unix", s.socketPath)
 	if err != nil {
-		log.Fatalf("Failed to listen on socket: %v", err)
+		log.Fatalf("failed to listen on unix socket %q: %v", s.socketPath, err)
 	}
 	defer listener.Close()
 
@@ -64,7 +64,7 @@ func (s *Server) Serve() {
 
 	go func() {
 		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("Failed to serve: %v", err)
+			log.Fatalf("failed to serve http over unix socket %q: %v", s.socketPath, err)
 		}
 	}()
 
@@ -83,7 +83,7 @@ func (s *Server) Serve() {
 
 	err = srv.Shutdown(ctx)
 	if err != nil {
-		log.Printf("Failed to shutdown server gracefully: %v", err)
+		log.Printf("failed to shut down server gracefully: %v", err)
 	}
 
 	os.Remove(s.socketPath)
@@ -91,39 +91,39 @@ func (s *Server) Serve() {
 }
 
 func (s *Server) handleApply(w http.ResponseWriter, req *http.Request) {
-	filepath, err := io.ReadAll(req.Body)
+	configPath, err := io.ReadAll(req.Body)
 	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+		http.Error(w, "failed to read config path from request body", http.StatusInternalServerError)
 		return
 	}
 
-	s.supervisor.SetConfigFilePath(string(filepath))
+	s.supervisor.SetConfigFilePath(string(configPath))
 
-	bodyBytes, err := os.ReadFile(string(filepath))
+	bodyBytes, err := os.ReadFile(string(configPath))
 	if err != nil {
 		if os.IsNotExist(err) {
-			http.Error(w, "Config file not found", http.StatusUnprocessableEntity)
+			http.Error(w, fmt.Sprintf("config file %q does not exist", string(configPath)), http.StatusUnprocessableEntity)
 			return
 		}
 
 		if os.IsPermission(err) {
-			http.Error(w, "Permission denied reading config file", http.StatusForbidden)
+			http.Error(w, fmt.Sprintf("permission denied reading config file %q", string(configPath)), http.StatusForbidden)
 			return
 		}
 
-		http.Error(w, "Failed to read config file", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to read config file %q: %v", string(configPath), err), http.StatusInternalServerError)
 		return
 	}
 
 	var pcInfo config.ConfigFile
 	if err := yaml.Unmarshal(bodyBytes, &pcInfo); err != nil {
-		http.Error(w, "Failed to parse YAML: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("failed to parse config file %q: %v", string(configPath), err), http.StatusBadRequest)
 		return
 	}
 
 	err = s.supervisor.Apply(pcInfo)
 	if err != nil {
-		http.Error(w, "Failed to apply configuration: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("failed to apply config file %q: %v", string(configPath), err), http.StatusBadRequest)
 		return
 	}
 
@@ -162,7 +162,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, req *http.Request) {
 
 	result, err := s.supervisor.RetrieveLogs(proc)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("server encountered an issue: %s", err.Error()), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to retrieve logs for process %q: %v", name, err), http.StatusInternalServerError)
 		return
 	}
 

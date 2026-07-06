@@ -11,8 +11,37 @@ import (
 )
 
 type LogWriter struct {
-	mu   sync.Mutex
-	file *os.File
+	mu         sync.Mutex
+	file       *os.File
+	path       string
+	maxLogSize int
+}
+
+func NewLogWriter() *LogWriter {
+	return &LogWriter{
+		maxLogSize: 10 * (1 << 20),
+		path:       configureLogPath(),
+	}
+}
+
+func (s *Supervisor) RunLogRotation() {
+	ticker := time.NewTicker(45 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.mu.Lock()
+			for _, p := range s.processes {
+				logWriter, ok := p.LogFile.(*LogWriter)
+				if !ok {
+					continue
+				}
+				logWriter.maybeRotate(p)
+			}
+			s.mu.Unlock()
+		}
+	}
 }
 
 func (l *LogWriter) Write(p []byte) (int, error) {
@@ -29,61 +58,42 @@ func (l *LogWriter) Close() error {
 	return l.file.Close()
 }
 
-func (s *Supervisor) RunLogRotation() {
-	ticker := time.NewTicker(45 * time.Second)
-	defer ticker.Stop()
+func (l *LogWriter) maybeRotate(proc *process.Process) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
-	for {
-		select {
-		case <-ticker.C:
-			s.mu.Lock()
-			for _, p := range s.processes {
-				s.maybeRotate(p)
-			}
-			s.mu.Unlock()
-		}
-	}
-}
-
-func (s *Supervisor) maybeRotate(proc *process.Process) {
-	logWriter, ok := proc.LogFile.(*LogWriter)
-	if !ok {
-		log.Printf("couldn't rotate log for process %s: invalid log writer", proc.Config.Name)
-		return
-	}
-
-	currentFile := logWriter.file
+	currentFile := l.file
 
 	info, err := currentFile.Stat()
 	if err != nil {
-		log.Printf("couldn't get the necessary file info: %v", err)
+		log.Printf("failed to stat log file for process %q: %v", proc.Config.Name, err)
 		return
 	}
 
-	if info.Size() < int64(s.maxLogSize) {
+	if info.Size() < int64(l.maxLogSize) {
 		return
 	}
 
-	oldLogFileName := filepath.Join(s.logFilePath, proc.Config.Name+".1.log")
-	procLogFileName := filepath.Join(s.logFilePath, proc.Config.Name+".log")
+	oldLogFileName := filepath.Join(l.path, proc.Config.Name+".1.log")
+	procLogFileName := filepath.Join(l.path, proc.Config.Name+".log")
 
 	err = os.Rename(procLogFileName, oldLogFileName)
 	if err != nil {
-		log.Printf("couldn't rename file: %v", err)
+		log.Printf("failed to rotate log file %q to %q for process %q: %v", procLogFileName, oldLogFileName, proc.Config.Name, err)
 		return
 	}
 
 	f, err := os.OpenFile(procLogFileName, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		log.Printf("couldn't open new log file: %v", err)
+		log.Printf("failed to open new log file %q for process %q: %v", procLogFileName, proc.Config.Name, err)
 		return
 	}
 
 	if err := currentFile.Close(); err != nil {
-		log.Printf("couldn't close rotated log file: %v", err)
+		log.Printf("failed to close rotated log file %q for process %q: %v", oldLogFileName, proc.Config.Name, err)
 		f.Close()
 		return
 	}
 
-	logWriter.file = f
+	l.file = f
 }

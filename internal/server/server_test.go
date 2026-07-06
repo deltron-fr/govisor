@@ -46,9 +46,15 @@ func TestWriteStatusRendersSnapshots(t *testing.T) {
 func TestHandleLogsReturnsProcessLogs(t *testing.T) {
 	const want = "api started\nrequest handled\n"
 
-	logDir := t.TempDir()
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	logDir := filepath.Join(stateHome, "govisor", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
 	processSupervisor := supervisor.NewSupervisor()
-	processSupervisor.SetLogFilePath(logDir)
 
 	err := processSupervisor.Apply(config.ConfigFile{
 		Processes: []config.ProcessConfig{
@@ -112,7 +118,7 @@ func TestHandleLogsRejectsUnknownProcess(t *testing.T) {
 		t.Fatalf("handleLogs() status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
 
-	if got, want := recorder.Body.String(), "process missing: does not exist\n"; got != want {
+	if got, want := recorder.Body.String(), "process \"missing\" does not exist\n"; got != want {
 		t.Fatalf("handleLogs() body = %q, want %q", got, want)
 	}
 }

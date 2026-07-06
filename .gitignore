@@ -1,5 +1,5 @@
 *.yaml
-scripts/
+scripts/*
 *.log
 bin/
 examples/

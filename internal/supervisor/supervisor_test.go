@@ -5,12 +5,61 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/deltron-fr/govisor/internal/config"
 	"github.com/deltron-fr/govisor/internal/process"
 )
+
+func TestApplyRejectsDuplicateProcessNamesInSameConfig(t *testing.T) {
+	supervisor := NewSupervisor()
+
+	err := supervisor.Apply(config.ConfigFile{
+		Name: "app",
+		Processes: []config.ProcessConfig{
+			{Name: "api", Command: "echo"},
+			{Name: "api", Command: "printf"},
+		},
+	})
+
+	if err == nil {
+		t.Fatal("Apply() error = nil, want duplicate process name error")
+	}
+
+	if !strings.Contains(err.Error(), `duplicate process name "api"`) {
+		t.Fatalf("Apply() error = %q, want duplicate process name error", err)
+	}
+
+	if len(supervisor.processes) != 0 {
+		t.Fatalf("Apply() registered %d processes, want 0", len(supervisor.processes))
+	}
+}
+
+func TestApplyRejectsProcessNameAlreadyManaged(t *testing.T) {
+	supervisor := NewSupervisor()
+	supervisor.processes["api"] = &process.Process{}
+
+	err := supervisor.Apply(config.ConfigFile{
+		Name: "app",
+		Processes: []config.ProcessConfig{
+			{Name: "api", Command: "echo"},
+		},
+	})
+
+	if err == nil {
+		t.Fatal("Apply() error = nil, want existing process name error")
+	}
+
+	if !strings.Contains(err.Error(), `process name "api" already exists`) {
+		t.Fatalf("Apply() error = %q, want existing process name error", err)
+	}
+
+	if len(supervisor.processConfigSet) != 0 {
+		t.Fatalf("Apply() registered %d process configs, want 0", len(supervisor.processConfigSet))
+	}
+}
 
 func TestResolveWorkDirUsesConfiguredWorkDir(t *testing.T) {
 	supervisor := &Supervisor{configFilePath: "/tmp/govisor/config.yaml"}

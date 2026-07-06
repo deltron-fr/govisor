@@ -44,7 +44,7 @@ func (c *Client) ApplyHandler(writer io.Writer, configPath string) error {
 
 	req, err := http.NewRequest(http.MethodPut, baseURL+"/apply", strings.NewReader(resolvedConfigPath))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("failed to create apply request for config path %q: %w", resolvedConfigPath, err)
 	}
 
 	return c.do(req, writer)
@@ -53,7 +53,7 @@ func (c *Client) ApplyHandler(writer io.Writer, configPath string) error {
 func (c *Client) StatusHandler(writer io.Writer) error {
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/status", nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("failed to create status request: %w", err)
 	}
 
 	return c.do(req, writer)
@@ -62,7 +62,7 @@ func (c *Client) StatusHandler(writer io.Writer) error {
 func (c *Client) LogsHandler(writer io.Writer, name string) error {
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/logs/"+name, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("failed to create logs request for process %q: %w", name, err)
 	}
 
 	return c.do(req, writer)
@@ -71,7 +71,7 @@ func (c *Client) LogsHandler(writer io.Writer, name string) error {
 func (c *Client) StartHandler(writer io.Writer) error {
 	path, err := ipc.SocketPath()
 	if err != nil {
-		return fmt.Errorf("error configuring socket path: %v", err)
+		return fmt.Errorf("failed to configure socket path: %w", err)
 	}
 
 	server := server.New(path)
@@ -82,7 +82,7 @@ func (c *Client) StartHandler(writer io.Writer) error {
 func (c *Client) StopHandler(writer io.Writer) error {
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/stop", nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("failed to create stop request: %w", err)
 	}
 
 	return c.do(req, writer)

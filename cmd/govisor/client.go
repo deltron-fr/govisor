@@ -11,7 +11,7 @@ import (
 func getSocketPath() string {
 	path, err := ipc.SocketPath()
 	if err != nil {
-		fmt.Printf("couldn't get socket path: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to configure socket path: %v\n", err)
 		os.Exit(1)
 	}
 

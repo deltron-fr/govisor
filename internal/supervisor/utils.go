@@ -14,12 +14,8 @@ func (s *Supervisor) SetConfigFilePath(path string) {
 	s.configFilePath = path
 }
 
-func (s *Supervisor) SetLogFilePath(path string) {
-	s.logFilePath = path
-}
-
 func (s *Supervisor) GetLogFilePath() string {
-	return s.logFilePath
+	return configureLogPath()
 }
 
 // configBaseDir returns the config file path(exculding the filename)
@@ -37,7 +33,7 @@ func (s *Supervisor) GetProcess(name string) (*process.Process, error) {
 	s.mu.Unlock()
 
 	if !ok {
-		return nil, fmt.Errorf("process %s: does not exist", name)
+		return nil, fmt.Errorf("process %q does not exist", name)
 	}
 
 	return process, nil
