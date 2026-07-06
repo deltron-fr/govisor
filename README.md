@@ -23,6 +23,12 @@ go install github.com/deltron-fr/govisor/cmd/govisor@latest
 
 This places the `govisor` binary in your `GOBIN` or `$(go env GOPATH)/bin`.
 
+For a specific release, pin the version:
+
+```sh
+go install github.com/deltron-fr/govisor/cmd/govisor@v1.0.0
+```
+
 To remove it, delete `govisor` from `GOBIN` or `$(go env GOPATH)/bin`.
 
 ## Quick Start
@@ -135,7 +141,7 @@ processes:
 | --- | --- | --- |
 | `name` | yes | Name of the config group. |
 | `processes` | yes | List of processes to supervise. |
-| `processes[].name` | yes | Unique process name. Use unique names in a config. |
+| `processes[].name` | yes | Unique process name. Names must be unique across all configs applied to the running supervisor. Duplicate names are rejected. |
 | `processes[].description` | no | Human-readable description. |
 | `processes[].command` | yes | Executable or command string to run. |
 | `processes[].args` | no | Arguments passed to the command when `shell` is `false`. |
@@ -249,19 +255,11 @@ Current rotation behavior is intentionally simple:
 
 More robust rotation is planned later, including archiving older logs, deleting old logs by age, and supporting safer restart behavior around rotation.
 
-## Process Model
-
-- `govisor` supervises host processes, not containers.
-- Commands can be executed directly or through `sh -c` with `shell: true`.
-- Configured `environment` values are added to the supervisor's inherited environment for both direct and shell-based commands.
-- Relative `workdir` paths are resolved from the YAML file location.
-- Restart backoff starts at 1 second and grows up to 30 seconds.
-- When the server shuts down, it sends `SIGTERM` to supervised processes and attempts a graceful stop.
 
 ## Notes
 
 - A configuration name can only be applied once while the server is running.
-- Use process names that are unique across all applied configurations.
+- Process names must be unique across all applied configurations. If a config repeats a process name, or reuses the name of an already managed process, `govisor apply` rejects the config before starting any of its processes.
 - This project is best treated as Linux-first today.
 
 ## Planned Additions
@@ -278,6 +276,16 @@ For local development, run:
 make help
 ```
 
+Run the test suite:
+
+```sh
+go test ./...
+go test -race ./...
+```
+
+## License
+
+`govisor` is released under the MIT License. See [LICENSE](./LICENSE).
 
 ## Contributing
 
